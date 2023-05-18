@@ -1,8 +1,6 @@
 using LiteDB.Async;
-using MCJanitor.Web.Features.DataSources;
 using MCJanitor.Web.Features.Infrastructure.MinecraftInterop;
 using MCJanitor.Web.Features.Infrastructure.MinecraftInterop.Rpc.Server;
-using MCJanitor.Web.Features.MinecraftInterop;
 using Microsoft.AspNetCore.WebSockets;
 using Orleans.Configuration;
 
@@ -31,7 +29,6 @@ builder.Services.AddMediatR(configuration =>
         var liteDbConnectionString = config.GetConnectionString("LiteDb");
         return new LiteDatabaseAsync(liteDbConnectionString);
     })
-    .AddTransient(typeof(IDataSource<>), typeof(LiteDbDataSource<>))
     .AddTransient<IRpcServerCommandHandler, RpcServerCommandHandler>()
     .AddSingleton<IMinecraftComputerRegistry, MinecraftComputerRegistry>();
 

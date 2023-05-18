@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using MCJanitor.Web.Features.Infrastructure.MinecraftInterop;
 using MCJanitor.Web.Features.MinecraftInterop;
+using MCJanitor.Web.Features.StorageSystem;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MCJanitor.Web.Controllers;
@@ -8,12 +9,39 @@ namespace MCJanitor.Web.Controllers;
 [ApiController, Route("api/[controller]")]
 public class MinecraftComputerController : ControllerBase
 {
+    private readonly IClusterClient _clusterClient;
     private readonly IMinecraftComputerRegistry _computerRegistry;
 
 
-    public MinecraftComputerController( IMinecraftComputerRegistry computerRegistry)
+    public MinecraftComputerController(IClusterClient clusterClient, IMinecraftComputerRegistry computerRegistry)
     {
+        _clusterClient = clusterClient;
         _computerRegistry = computerRegistry;
+    }
+    
+    [HttpGet("{computerId:int}/grain/inventories")]
+    public async Task<IActionResult> GetGrainInventoriesAsync(int computerId)
+    {
+        var grain = _clusterClient.GetGrain<IStorageServerGrain>(computerId);
+        await grain.RefreshAsync();
+        var inventories = await grain.GetItemContainersAsync();
+        var tasks = inventories.Select(x => x.GetContainerName());
+        return Ok(await Task.WhenAll(tasks));
+    }
+    // list items from all inventories
+    [HttpGet("{computerId:int}/items")]
+    public async Task<IActionResult> GetItemsAsync(int computerId)
+    {
+        var grain = _clusterClient.GetGrain<IStorageServerGrain>(computerId);
+        await grain.RefreshAsync();
+        var inventories = await grain.GetItemContainersAsync();
+        var tasks = inventories.Select(x => x.ListItems());
+        var nameTasks = inventories.Select(x => x.GetContainerName());
+        var items = await Task.WhenAll(tasks);
+        var names = await Task.WhenAll(nameTasks);
+        var result = items.Zip(names).ToDictionary(x => x.Second, x => x.First);
+        
+        return Ok(result);
     }
     
     // send ping command

@@ -1,14 +1,18 @@
 ﻿using System.Collections.Immutable;
 using MCJanitor.Web.Features.Infrastructure.MinecraftInterop;
 using MCJanitor.Web.Features.MinecraftInterop;
+using MCJanitor.Web.Features.MinecraftInterop.Requests;
 using MCJanitor.Web.Features.StorageSystem.Definitions;
+using MCJanitor.Web.Features.StorageSystem.Entities;
+using MediatR;
 
 namespace MCJanitor.Web.Features.StorageSystem;
 
 // key is the computer id
 // where the computer id is the id of the computer that serves this storage system
-public interface IStorageServerGrain : IGrainWithStringKey
+public interface IStorageServerGrain : IGrainWithIntegerKey
 {
+    Task RefreshAsync();
     Task<ImmutableList<IItemContainerGrain>> GetItemContainersAsync();
 }
 
@@ -17,42 +21,57 @@ public record StorageServerGrainState
 {
     public ImmutableList<IItemContainerGrain> ItemContainers { get; init; } = ImmutableList<IItemContainerGrain>.Empty;
 }
-public class StorageServerGrain : Grain, IStorageServerGrain
+public class StorageServerGrain : Grain<StorageServerGrainState>, IStorageServerGrain
 {
-    private readonly IMinecraftComputerRegistry _computerRegistry;
+    private readonly IMediator _mediator;
     private int _computerId;
 
     private bool ValidateKey()
-    {
-        if (!int.TryParse(this.GetPrimaryKeyString(), out var computerId)) return false;
-        _computerId = computerId;
+    {;
+        _computerId = (int)this.GetPrimaryKeyLong();
         return true;
 
     }
 
-    public StorageServerGrain(IMinecraftComputerRegistry computerRegistry)
+    public StorageServerGrain(IMediator mediator)
     {
-        _computerRegistry = computerRegistry;
+        _mediator = mediator;
     }
 
-    public override Task OnActivateAsync(CancellationToken cancellationToken)
+    public override async Task OnActivateAsync(CancellationToken cancellationToken)
     {
         if (!ValidateKey())
         {
             throw new InvalidOperationException("Key must be a valid computer id");
         }
-        var maybeComputer = _computerRegistry.GetComputer(_computerId);
-        if (maybeComputer is null)
+        var hasBeenSeen = await _mediator.Send(new ComputerExistsQuery(_computerId), cancellationToken);
+        if (!hasBeenSeen)
         {
             throw new ComputerNotFoundException(_computerId);
         }
-        return base.OnActivateAsync(cancellationToken);
+        await base.OnActivateAsync(cancellationToken);
     }
 
-    public async Task<ImmutableList<IItemContainerGrain>> GetItemContainersAsync()
+    public async Task RefreshAsync()
     {
-        throw new NotImplementedException();
+        // Fetch the inventories from the computer
+        var inventories = await _mediator.Send(new InventoriesQuery(_computerId));
+        var grains = inventories
+            .Select(x => ItemContainerKey.Of(_computerId, x.Name))
+            .Select(x => GrainFactory.GetGrain<IItemContainerGrain>(x));
+        
+        State = State with { ItemContainers = grains.ToImmutableList() };
+        
+        // refresh the inventories
+        foreach (var grain in grains)
+        {
+            await grain.RefreshAsync();
+        }
+        
+        await WriteStateAsync();
     }
+
+    public Task<ImmutableList<IItemContainerGrain>> GetItemContainersAsync() => Task.FromResult(State.ItemContainers);
 }
 
 public class ComputerNotFoundException : Exception
